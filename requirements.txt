@@ -7,3 +7,4 @@ yt-dlp
 youtube-transcript-api
 google-genai
 requests
+audioop-lts

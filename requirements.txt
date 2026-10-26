@@ -1,0 +1,9 @@
+streamlit
+edge-tts
+pydub
+faster-whisper
+pillow
+yt-dlp
+youtube-transcript-api
+google-genai
+requests

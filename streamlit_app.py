@@ -23,22 +23,6 @@ def extract_video_id(url):
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
-def analyze_frame_style_locally(thumb_bytes):
-    try:
-        from io import BytesIO
-        img = Image.open(BytesIO(thumb_bytes)).convert("RGB")
-        stat = ImageStat.Stat(img)
-        r, g, b = stat.mean
-        brightness = (r + g + b) / 3
-        if brightness < 80:
-            return "pitch black dark background, extreme macro close-up photography, glowing rim lighting, high contrast mystery documentary style, hyper-realistic 8k, Unreal Engine 5, no text"
-        elif g > r and g > b:
-            return "cinematic nature documentary photography, deep moody green tones, volumetric lighting, ultra detailed macro 8k, no text"
-        else:
-            return "hyper-realistic cinematic 3D documentary render, dramatic studio lighting, sharp focus, 8k resolution, no text"
-    except Exception:
-        return "pitch black dark background, extreme macro close-up photography, glowing rim lighting, high contrast mystery style, 8k, no text"
-
 def get_competitor_data_and_frame(url_or_topic):
     if "http" not in url_or_topic:
         return {"title": url_or_topic, "text": f"Topic: {url_or_topic}"}, None
@@ -121,7 +105,7 @@ def call_any_ai(api_key, prompt, thumb_bytes=None, is_json=False):
 DEV_TO_ROMAN = {
     'अ':'A','आ':'AA','इ':'I','ई':'EE','उ':'U','ऊ':'OO','ऋ':'RI','ए':'E','ऐ':'AI','ओ':'O','औ':'AU',
     'क':'KA','ख':'KHA','ग':'GA','घ':'GHA','च':'CHA','छ':'CHHA','ज':'JA','झ':'JHA','ट':'TA','ठ':'THA',
-    'ड':'DA','ढ':'DHA','ण':'NA','त':'TA','थ':'THA','द':'DA','ध':'DHA','न':'NA','प':'PA','फ':'PHA',
+    'ड':'DA','ढ':'DHA','ण':'NA','त':'TA','थ':'THA','द':'DA','ध':'DHA','न':'NA','ป':'PA','फ':'PHA',
     'ब':'BA','भ':'BHA','म':'MA','य':'YA','र':'RA','ल':'LA','व':'VA','श':'SHA','ष':'SHA','स':'SA','ह':'HA',
     'ा':'A','ि':'I','ी':'EE','ु':'U','ू':'OO','े':'E','ै':'AI','ो':'O','ौ':'AU','ं':'N','ँ':'N','्':'',
     '़':'','।':'','?':'','!':'',',':'','.':''
@@ -139,32 +123,28 @@ def to_clean_roman(text):
             out.append(ch.upper())
     return re.sub(r'\s+', ' ', "".join(out)).strip()
 
-def build_guaranteed_script_and_visuals(comp_info, thumb_bytes, api_key, target_minutes, num_scenes, custom_style, status_box):
-    base_dna = custom_style.strip() if custom_style.strip() else analyze_frame_style_locally(thumb_bytes)
+def build_guaranteed_script_and_video_queries(comp_info, thumb_bytes, api_key, target_minutes, num_scenes, status_box):
     title_subject = comp_info["title"]
     comp_text = comp_info["text"]
 
-    status_box.info("🧠 Competitor ka Visual DNA aur Natural Documentary Script ban rahi hai...")
+    status_box.info("🧠 Competitor ka topic samajh kar Real Video Clip search keywords ban rahe hain...")
 
     prompt = f"""
 Topic/Competitor Data:
 {comp_text[:1400]}
 
-Target Visual Style DNA: {base_dna}
-
-1. Write a dramatic, natural-sounding Hindi documentary narration (in Devanagari Hindi, using natural pauses with commas and full stops so voiceover sounds like a real human storyteller).
-2. Also provide 'hinglish_captions': the EXACT same script written in Roman Hinglish (English alphabet, e.g. 'KYA AAPNE KABHI SOCHA HAI...') for on-screen subtitles.
-3. Create {num_scenes} COMPLETELY DIFFERENT, specific English visual scene descriptions showing different angles, actions, anatomy, environments, and moments of the story.
+1. Write a dramatic, natural-sounding Hindi documentary narration (in Devanagari Hindi, using natural pauses with commas and full stops).
+2. Also provide 'hinglish_captions': the EXACT same script written in Roman Hinglish for on-screen subtitles.
+3. Create {num_scenes} short, highly specific English search queries to find real stock video footage (e.g. "dark macro spider moving slow motion", "mysterious forest dark cinematic footage", "microscopic science laboratory dark background").
 
 Return ONLY valid JSON:
 {{
-  "visual_style_dna": "{base_dna}",
   "script": "Full Hindi narration in Devanagari...",
   "hinglish_captions": "Full narration in Roman Hinglish...",
-  "scenes": [
-    "Extreme macro close-up of glowing spider eyes in pitch black darkness",
-    "Microscopic view of venomous fangs dripping glowing liquid in dark",
-    "Human finger slowly approaching a tiny creature on a dark leaf"
+  "video_queries": [
+    "dark macro spider moving slow motion stock footage",
+    "mysterious dark moody forest cinematic background video",
+    "microscopic science laboratory dark glowing background"
   ]
 }}
 """
@@ -180,116 +160,98 @@ Return ONLY valid JSON:
         except Exception:
             pass
 
-    dna = (parsed.get("visual_style_dna") if parsed else None) or base_dna
     base_script = (parsed.get("script") if parsed else None) or ""
     hinglish_sub = (parsed.get("hinglish_captions") if parsed else None) or ""
-    raw_scenes = (parsed.get("scenes") if parsed else None) or []
+    queries = (parsed.get("video_queries") if parsed else None) or []
 
     target_parts = 1 if target_minutes <= 2 else max(2, min(6, target_minutes // 2))
     script_parts = [base_script] if len(base_script) > 80 else []
 
-    chapter_angles = [
-        "चौंकाने वाली शुरुआत और सबसे बड़ा रहस्य",
-        "वैज्ञानिकों की खोज और अनदेखा सच",
-        "प्रकृति का सबसे खतरनाक और अजीब नियम",
-        "अंतिम सत्य और होश उड़ा देने वाला निष्कर्ष"
-    ]
-
     for idx in range(len(script_parts), target_parts):
         status_box.info(f"✍️ Documentary Script Part {idx+1}/{target_parts} likha ja raha hai...")
-        ch_angle = chapter_angles[idx % len(chapter_angles)]
-        ch_prompt = f"Write a 250-word dramatic, human-like Hindi documentary narration about '{title_subject}' ({ch_angle}). Use short punchy sentences with commas for natural breathing pauses. Write ONLY spoken Hindi words in Devanagari."
+        ch_prompt = f"Write a 250-word dramatic Hindi documentary narration about '{title_subject}'. Use short punchy sentences with commas for natural pauses. Write ONLY spoken Hindi words in Devanagari."
         ch_res = call_any_ai(api_key, ch_prompt, thumb_bytes=None, is_json=False)
         if ch_res and len(ch_res.strip()) > 60:
             script_parts.append(re.sub(r"[#*`]", "", ch_res).strip())
         else:
             script_parts.append(
-                f"जरा सोचिए, जिस चीज़ को हम मामूली समझ कर नज़रअंदाज़ कर देते हैं, उसके पीछे कितना बड़ा रहस्य छिपा हो सकता है। "
-                f"जब वैज्ञानिकों ने इसे माइक्रोस्कोप के नीचे रखकर देखा, तो उनके भी होश उड़ गए। "
-                f"अंधेरे में दिखने वाला यह नज़ारा जितना अजीब है, असलियत में उतना ही खतरनाक भी है। "
-                f"एक छोटी सी गलती, और सेकंड के सौवें हिस्से में सब कुछ बदल सकता है।"
+                f"जरा सोचिए, जिस चीज़ को हम मामूली समझ कर नज़रअंदाज़ कर देते हैं, उसके पीछे कितना बड़ा रहस्य छिपा ho sakta hai. "
+                f"जब वैज्ञानिकों ने इसे माइक्रोस्कोप के नीचे रखकर देखा, तो उनके भी होश उड़ गए।"
             )
 
     full_script = "\n\n".join(script_parts)
     if not hinglish_sub or len(hinglish_sub) < 40:
         hinglish_sub = to_clean_roman(full_script)
 
-    unique_scene_templates = [
-        f"extreme macro close-up of {title_subject} glowing eyes and intricate body texture in pitch darkness",
-        f"human fingertip cautiously approaching a tiny mysterious creature in pitch black void, rim lighting",
-        f"microscopic anatomy view of glowing biological fibers and venom glands in dark",
-        f"dramatic side silhouette of tiny creature standing on a sharp edge in pitch black background",
-        f"high-speed freeze frame of tiny predator striking in complete darkness, glowing particles",
-        f"3D X-ray cross-section showing internal glowing organs against pitch black background",
-        f"cinematic overhead shot of a tiny mysterious specimen under a single dramatic spotlight",
-        f"extreme close-up of microscopic claws gripping a glowing surface in pitch dark",
-        f"mysterious bioluminescent droplets falling in slow motion against black background",
-        f"scale comparison shot showing tiny creature next to a glowing needle tip in darkness",
-        f"dramatic low-angle hero shot of mysterious organism looking giant and terrifying in dark",
-        f"glowing neural network pathways inside a tiny creature brain, dark documentary 3D render"
+    default_queries = [
+        f"dark macro {title_subject} cinematic footage",
+        "mysterious dark moody documentary background video",
+        "microscopic science laboratory glowing dark visuals",
+        "cinematic slow motion dark moody nature background"
     ]
     
-    final_prompts = []
+    final_queries = []
     for i in range(num_scenes):
-        if i < len(raw_scenes) and isinstance(raw_scenes[i], str) and len(raw_scenes[i]) > 12:
-            scene_desc = re.sub(r"^Scene\s*\d+\s*:\s*", "", raw_scenes[i])
+        if i < len(queries) and isinstance(queries[i], str) and len(queries[i]) > 5:
+            final_queries.append(queries[i])
         else:
-            scene_desc = unique_scene_templates[i % len(unique_scene_templates)]
-        final_prompts.append(f"{scene_desc}, {dna}, no text, no watermark")
+            final_queries.append(default_queries[i % len(default_queries)])
 
-    return full_script, hinglish_sub, final_prompts, dna
+    return full_script, hinglish_sub, final_queries
 
-def generate_unique_ai_images(prompts, status_box, width, height):
-    files = []
-    total = len(prompts)
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
-    models_to_try = ["flux", "turbo", ""]
+def download_real_video_clips(queries, status_box, width, height):
+    video_files = []
+    total = len(queries)
     
-    for i, p in enumerate(prompts):
-        status_box.info(f"🎨 Unique AI Visual {i+1}/{total} ban raha hai (100% Naya Scene)...")
-        clean_p = urllib.parse.quote(p[:300])
-        fname = f"frame_{i:04d}.jpg"
+    for i, q in enumerate(queries):
+        status_box.info(f"🎥 Asli Video Clip {i+1}/{total} download ho rahi hai...")
+        clip_name = f"clip_{i:03d}.mp4"
+        norm_name = f"norm_{i:03d}.mp4"
         ok = False
         
-        for attempt, m_name in enumerate(models_to_try):
-            try:
-                seed_val = 2000 + (i * 173) + attempt
-                m_param = f"&model={m_name}" if m_name else ""
-                url = f"https://image.pollinations.ai/prompt/{clean_p}?width={width}&height={height}&seed={seed_val}&nologo=true{m_param}"
-                r = requests.get(url, headers=headers, timeout=30)
-                if r.status_code == 200 and len(r.content) > 3000:
-                    with open(fname, "wb") as f:
-                        f.write(r.content)
-                    img = Image.open(fname).convert("RGB").resize((width, height), Image.LANCZOS)
-                    img = ImageEnhance.Contrast(img).enhance(1.12)
-                    img.save(fname, quality=92)
-                    files.append(fname)
+        # Search YouTube for free stock/cinematic footage matching query
+        search_query = f"ytsearch1: {q} stock footage free"
+        ydl_opts = {
+            'format': 'best[height<=720]',
+            'outtmpl': clip_name,
+            'quiet': True,
+            'noplaylist': True,
+            'socket_timeout': 15
+        }
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([search_query])
+            if os.path.exists(clip_name) and os.path.getsize(clip_name) > 50000:
+                # Normalize video to exact width x height and 30fps using ffmpeg
+                norm_cmd = [
+                    "ffmpeg", "-y", "-i", clip_name,
+                    "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps=30",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-an", norm_name
+                ]
+                subprocess.run(norm_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                if os.path.exists(norm_name) and os.path.getsize(norm_name) > 20000:
+                    video_files.append(norm_name)
                     ok = True
-                    break
-            except Exception:
-                time.sleep(1.5)
-                
+        except Exception:
+            pass
+            
         if not ok:
+            # Fallback: Generate a smooth dynamic moving gradient/plasma video using FFmpeg if download fails
+            status_box.info(f"🔄 Fallback Moving Video Clip {i+1} generate ho rahi hai...")
+            gen_cmd = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r=30",
+                "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", norm_name
+            ]
             try:
-                short_q = urllib.parse.quote(f"extreme macro close up mysterious dark creature scene {i+1}, pitch black background, glowing rim light, 8k, no text")
-                url2 = f"https://image.pollinations.ai/prompt/{short_q}?width={width}&height={height}&seed={9500+i}&nologo=true"
-                r2 = requests.get(url2, headers=headers, timeout=25)
-                if r2.status_code == 200 and len(r2.content) > 2000:
-                    with open(fname, "wb") as f:
-                        f.write(r2.content)
-                    img = Image.open(fname).convert("RGB").resize((width, height), Image.LANCZOS)
-                    img.save(fname, quality=92)
-                    files.append(fname)
+                subprocess.run(gen_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                if os.path.exists(norm_name):
+                    video_files.append(norm_name)
                     ok = True
             except Exception:
                 pass
                 
-        if not ok:
-            # Never repeat competitor thumbnail!
-            Image.new("RGB", (width, height), (12, 12, 18)).save(fname)
-            files.append(fname)
-            
-    return files
+    return video_files
 
 async def make_tts(text, voice_id, pitch_val, rate_val):
     comm = edge_tts.Communicate(text, voice_id, pitch=pitch_val, rate=rate_val)
@@ -353,162 +315,86 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.writelines(lines)
     return "subs.ass"
 
-def create_motion_frames(image_files, total_dur, width, height, status_box):
-    status_box.info("🎬 Visuals mein Smooth Zoom-In aur Documentary Motion lag raha hai...")
-    motion_entries = []
-    num_base = len(image_files)
-    scene_dur = max(2.2, total_dur / max(1, num_base))
-    steps_per_scene = 6
-    step_dur = scene_dur / steps_per_scene
+def render_final_video(video_files, audio_file, sub_file, total_dur, status_box):
+    status_box.info("⚡ Asli Moving Video Clips aur Voiceover ko merge kiya ja raha hai...")
     
-    idx_counter = 0
-    cur_t = 0.0
-    while cur_t < total_dur:
-        for i, img_path in enumerate(image_files):
-            if cur_t >= total_dur:
+    # Create concat list for video clips to match total audio duration
+    concat_lines = []
+    curr_dur = 0.0
+    while curr_dur < total_dur:
+        for vf in video_files:
+            if curr_dur >= total_dur:
                 break
-            try:
-                base = Image.open(img_path).convert("RGB").resize((width, height), Image.LANCZOS)
-                zoom_in = (i % 2 == 0)
-                for s in range(steps_per_scene):
-                    factor = (s / steps_per_scene) * 0.12
-                    if not zoom_in:
-                        factor = 0.12 - factor
-                    cw = int(width * (1.0 - factor))
-                    ch = int(height * (1.0 - factor))
-                    left = (width - cw) // 2
-                    top = (height - ch) // 2
-                    frame = base.crop((left, top, left + cw, top + ch)).resize((width, height), Image.LANCZOS)
-                    m_name = f"m_{idx_counter:05d}.jpg"
-                    frame.save(m_name, quality=88)
-                    motion_entries.append((m_name, step_dur))
-                    idx_counter += 1
-                    cur_t += step_dur
-            except Exception:
-                motion_entries.append((img_path, scene_dur))
-                cur_t += scene_dur
-    return motion_entries
-
-def render_ffmpeg(image_files, audio_file, sub_file, total_dur, width, height, status_box):
-    motion_list = create_motion_frames(image_files, total_dur, width, height, status_box)
-    status_box.info("⚡ Final HD Video aur Captions Render ho rahe hain...")
-    lines = [f"file '{fname}'\nduration {dur:.4f}\n" for fname, dur in motion_list]
-    lines.append(f"file '{motion_list[-1][0]}'\n")
-    with open("inputs.txt", "w") as f:
-        f.writelines(lines)
+            concat_lines.append(f"file '{vf}'\n")
+            curr_dur += 4.0  # approximate clip duration
+            
+    with open("video_inputs.txt", "w") as f:
+        f.writelines(concat_lines)
+        
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "inputs.txt",
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "video_inputs.txt",
         "-i", audio_file,
-        "-vf", f"eq=contrast=1.12:saturation=1.18,ass={sub_file}",
+        "-vf", f"ass={sub_file}",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-shortest", "final_output.mp4"
     ]
     subprocess.run(cmd, check=True)
     return "final_output.mp4"
 
-st.title("🔥 Pro Documentary Auto-Video Studio")
-st.caption("100% Unique AI Visuals | Deep Human-Like Voice | Smooth Zoom Motion | Fixed Hinglish Captions")
+st.title("🔥 Pro Moving-Video Documentary Studio")
+st.caption("100% Real Video Footage | Deep Human-Like Voice | Moving Backgrounds | Hinglish Captions")
 
-tab1, tab2 = st.tabs(["🤖 Mode 1: Competitor Link -> Pro Video", "📁 Mode 2: Apni Script + Visuals"])
+comp_url = st.text_input("1. Competitor YouTube Video Link (Ya Topic)")
+voice_choice = st.selectbox("2. Voiceover Tone Chunein:", list(VOICE_OPTIONS.keys()))
 
-with tab1:
-    comp_url = st.text_input("1. Competitor YouTube Video Link (Ya Topic)")
-    custom_style = st.text_input("2. Visual Style Lock (Optional)", placeholder="e.g. Pitch black dark background, glowing macro insect, 8k")
-    voice_choice = st.selectbox("3. Voiceover Tone Chunein:", list(VOICE_OPTIONS.keys()))
-    
-    duration_choice = st.selectbox(
-        "4. Video Ki Lambai (Duration) Chunein:",
-       "1 Minute (YouTube Shorts / Reels - 9:16 Vertical)",
-            "5 Minutes (Long Video - 16:9 Landscape)",
-            "10 Minutes (Long Video - 16:9 Landscape)",
-            "20 Minutes (Deep Documentary - 16:9 Landscape)",
-            "30 Minutes (Mega Documentary - 16:9 Landscape)"
-        ]
-    )
-    
-    num_vis = st.slider("5. Kitne Unique AI Visuals Banayein?", 12, 45, 20, 4)
-    api_key = st.text_input("6. Gemini API Key (Optional)", type="password")
-    
-    if st.button("🚀 GENERATE PRO DOCUMENTARY VIDEO", use_container_width=True):
-        if not comp_url:
-            st.error("❌ Kripya Competitor YouTube Link daalein!")
-        else:
-            status = st.empty()
-            try:
-                target_mins = int(duration_choice.split()[0])
-                width, height = (720, 1280) if target_mins == 1 else (1280, 720)
-                v_id, v_pitch, v_rate = VOICE_OPTIONS[voice_choice]
-                
-                status.info("🕵️ Competitor Video ka Visual Style scan ho raha hai...")
-                comp_info, thumb_bytes = get_competitor_data_and_frame(comp_url)
-                
-                script, hinglish_sub, prompts, detected_dna = build_guaranteed_script_and_visuals(
-                    comp_info, thumb_bytes, api_key, target_mins, num_vis, custom_style, status
+duration_choice = st.selectbox(
+    "3. Video Ki Lambai (Duration) Chunein:",
+    [
+        "1 Minute (YouTube Shorts / Reels - 9:16 Vertical)",
+        "5 Minutes (Long Video - 16:9 Landscape)",
+        "10 Minutes (Long Video - 16:9 Landscape)"
+    ]
+)
+
+num_clips = st.slider("4. Kitni Video Clips Jodrein?", 5, 20, 10, 1)
+api_key = st.text_input("5. Gemini API Key (Optional)", type="password")
+
+if st.button("🚀 GENERATE REAL MOVING VIDEO", use_container_width=True):
+    if not comp_url:
+        st.error("❌ Kripya Competitor YouTube Link daalein!")
+    else:
+        status = st.empty()
+        try:
+            target_mins = int(duration_choice.split()[0])
+            width, height = (720, 1280) if target_mins == 1 else (1280, 720)
+            v_id, v_pitch, v_rate = VOICE_OPTIONS[voice_choice]
+            
+            status.info("🕵️ Competitor Video scan ho rahi hai...")
+            comp_info, thumb_bytes = get_competitor_data_and_frame(comp_url)
+            
+            script, hinglish_sub, queries = build_guaranteed_script_and_video_queries(
+                comp_info, thumb_bytes, api_key, target_mins, num_clips, status
+            )
+            
+            vid_files = download_real_video_clips(queries, status, width, height)
+            
+            status.info("🎙️ Deep Documentary Voiceover aur SFX ban raha hai...")
+            asyncio.run(make_tts(script, v_id, v_pitch, v_rate))
+            aud, dur = build_natural_audio_and_sfx(len(vid_files))
+            
+            sub = make_subtitles_direct(hinglish_sub, dur, width, height)
+            out = render_final_video(vid_files, aud, sub, dur, status)
+            
+            status.success(f"✅ Aapki {int(dur//60)} Min {int(dur%60)} Sec ki Real Moving Video Ready Hai!")
+            st.video(out)
+            with open(out, "rb") as f:
+                st.download_button(
+                    "📥 Download Real MP4 Video",
+                    f,
+                    file_name="real_moving_video.mp4",
+                    mime="video/mp4",
+                    use_container_width=True
                 )
-                st.info(f"🎨 **Cloned Visual Style DNA:** {detected_dna}")
-                
-                imgs = generate_unique_ai_images(prompts, status, width, height)
-                
-                st.write("✅ **Generated Unique AI Visuals Preview (No Thumbnail Used!):**")
-                cols = st.columns(4)
-                for idx_preview in range(min(4, len(imgs))):
-                    cols[idx_preview].image(imgs[idx_preview], caption=f"Scene {idx_preview+1}")
-                
-                status.info("🎙️ Deep Documentary Voiceover + Natural Pauses + Bass SFX ban raha hai...")
-                asyncio.run(make_tts(script, v_id, v_pitch, v_rate))
-                aud, dur = build_natural_audio_and_sfx(len(imgs))
-                
-                sub = make_subtitles_direct(hinglish_sub, dur, width, height)
-                out = render_ffmpeg(imgs, aud, sub, dur, width, height, status)
-                
-                status.success(f"✅ Aapki {int(dur//60)} Min {int(dur%60)} Sec ki Pro Video Ready Hai!")
-                st.video(out)
-                with open(out, "rb") as f:
-                    st.download_button(
-                        "📥 Download Pro MP4 Video",
-                        f,
-                        file_name="pro_documentary_video.mp4",
-                        mime="video/mp4",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                status.error(f"⚠️ Error: {str(e)}")
-
-with tab2:
-    user_script = st.text_area("1. Apni Script Paste Karein", height=150)
-    voice_choice2 = st.selectbox("2. Voiceover Tone:", list(VOICE_OPTIONS.keys()), key="v2")
-    format_choice = st.radio("3. Video Size Chunein:", ["9:16 Vertical (Shorts)", "16:9 Landscape (Long Video)"], horizontal=True)
-    uploaded_files = st.file_uploader("4. Apne Visuals Upload Karein", accept_multiple_files=True, type=['jpg', 'jpeg', 'png', 'webp'])
-    
-    if st.button("⚡ EDIT MY VISUALS NOW", use_container_width=True):
-        if not user_script or not uploaded_files:
-            st.error("❌ Script aur Photos dono daalein!")
-        else:
-            status2 = st.empty()
-            try:
-                w, h = (720, 1280) if "9:16" in format_choice else (1280, 720)
-                v_id, v_pitch, v_rate = VOICE_OPTIONS[voice_choice2]
-                status2.info("🎙️ Deep Voiceover + Natural Pauses + SFX ban raha hai...")
-                asyncio.run(make_tts(user_script, v_id, v_pitch, v_rate))
-                aud, dur = build_natural_audio_and_sfx(len(uploaded_files))
-                status2.info(f"🖼️ {len(uploaded_files)} Visuals set ho rahe hain...")
-                imgs = []
-                for i, uf in enumerate(uploaded_files):
-                    img = Image.open(uf).convert("RGB").resize((w, h), Image.LANCZOS)
-                    p = f"manual_{i:04d}.jpg"
-                    img.save(p, quality=90)
-                    imgs.append(p)
-                sub = make_subtitles_direct(user_script, dur, w, h)
-                out = render_ffmpeg(imgs, aud, sub, dur, w, h, status2)
-                status2.success("✅ Aapki Video Ready Hai!")
-                st.video(out)
-                with open(out, "rb") as f:
-                    st.download_button(
-                        "📥 Download Edited Video",
-                        f,
-                        file_name="edited_video.mp4",
-                        mime="video/mp4",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                status2.error(f"⚠️ Error: {str(e)}")
+        except Exception as e:
+            status.error(f"⚠️ Error: {str(e)}")
+        

@@ -5,6 +5,7 @@ import edge_tts
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
+from google.genai import types
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
 from pydub.generators import Sine, WhiteNoise
@@ -21,134 +22,197 @@ def load_whisper():
 
 whisper_model = load_whisper()
 
-def safe_gemini_call(client, prompt, is_json=False, status_box=None):
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
-    for attempt in range(6):
-        model_name = models_to_try[min(attempt // 2, len(models_to_try) - 1)]
-        try:
-            cfg = {"response_mime_type": "application/json"} if is_json else None
-            return client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=cfg
-            )
-        except Exception as e:
-            err_str = str(e)
-            if "503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower():
-                wait_s = 6 * (attempt + 1)
-                if status_box:
-                    status_box.warning(f"⏳ Google AI Server busy hai, {wait_s} sec mein auto-retry ho raha hai (Attempt {attempt+1}/6)...")
-                time.sleep(wait_s)
-            elif "404" in err_str and model_name != "gemini-3.8-flash":
-                continue
-            else:
-                raise e
-    raise Exception("Google AI Server abhi bahut zyada busy hai. Kripya 1 minute baad dobara button dabayein.")
-
 def extract_video_id(url):
     pattern = r"(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
-def get_competitor_info(url_or_topic):
+def get_competitor_data_and_frame(url_or_topic):
     if "http" not in url_or_topic:
-        return f"Topic: {url_or_topic}"
+        return f"Topic: {url_or_topic}", None
     vid_id = extract_video_id(url_or_topic)
     info_text = ""
+    thumb_bytes = None
+    
     if vid_id:
+        # Download actual visual frame/thumbnail from competitor video to clone exact art style
+        for res_type in ["maxresdefault.jpg", "hqdefault.jpg"]:
+            try:
+                t_url = f"https://img.youtube.com/vi/{vid_id}/{res_type}"
+                r = requests.get(t_url, timeout=10)
+                if r.status_code == 200 and len(r.content) > 5000:
+                    thumb_bytes = r.content
+                    break
+            except Exception:
+                pass
         try:
             t_list = YouTubeTranscriptApi.get_transcript(vid_id, languages=['hi', 'en', 'en-IN'])
             info_text += "Transcript: " + " ".join([t['text'] for t in t_list])[:3500] + "\n"
         except Exception:
             pass
+            
     try:
         ydl_opts = {'quiet': True, 'skip_download': True, 'extract_flat': True, 'playlistend': 5}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url_or_topic, download=False)
             if 'entries' in info:
-                titles = [e.get('title', '') for e in info['entries'] if e]
+                entries = [e for e in info['entries'] if e]
+                titles = [e.get('title', '') for e in entries]
                 info_text += f"Channel Style & Recent Videos: {', '.join(titles)}\n"
+                if not thumb_bytes and entries and entries[0].get('id'):
+                    r = requests.get(f"https://img.youtube.com/vi/{entries[0]['id']}/hqdefault.jpg", timeout=10)
+                    if r.status_code == 200:
+                        thumb_bytes = r.content
             else:
-                info_text = f"Title: {info.get('title', '')}\nDesc: {info.get('description', '')[:800]}\n" + info_text
+                tags = ", ".join(info.get('tags', [])[:15]) if info.get('tags') else ""
+                info_text = f"Title: {info.get('title', '')}\nTags: {tags}\nDesc: {info.get('description', '')[:800]}\n" + info_text
     except Exception:
         pass
-    return info_text if info_text else f"Topic/Channel: {url_or_topic}"
+    return (info_text if info_text else f"Topic/Video: {url_or_topic}"), thumb_bytes
 
-def ai_long_and_short_brain(comp_data, api_key, target_minutes, num_scenes, status_box):
-    client = genai.Client(api_key=api_key.strip())
+def free_turbo_ai(prompt, is_json=False):
+    for attempt in range(3):
+        try:
+            url = "https://text.pollinations.ai/"
+            payload = {
+                "messages": [
+                    {"role": "system", "content": "You are an expert Hindi YouTube automation director and visual style cloner. Return exact requested format."},
+                    {"role": "user", "content": prompt}
+                ],
+                "model": "openai",
+                "jsonMode": is_json
+            }
+            r = requests.post(url, json=payload, timeout=70)
+            if r.status_code == 200 and r.text:
+                return r.text
+        except Exception:
+            time.sleep(2)
+    raise Exception("Network timeout. Kripya dobara button dabayein.")
+
+def smart_ai_call(api_key, prompt, thumb_bytes=None, is_json=False, status_box=None):
+    if api_key and len(api_key.strip()) > 10:
+        client = genai.Client(api_key=api_key.strip())
+        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.8-flash"]
+        for m in models:
+            try:
+                cfg = {"response_mime_type": "application/json"} if is_json else None
+                contents = [prompt]
+                if thumb_bytes:
+                    contents.append(types.Part.from_bytes(data=thumb_bytes, mime_type="image/jpeg"))
+                res = client.models.generate_content(model=m, contents=contents, config=cfg)
+                if res and res.text:
+                    return res.text
+            except Exception:
+                continue
+    if status_box:
+        status_box.info("⚡ Direct Unstoppable AI Engine se Script aur Visual Style Clone ho raha hai...")
+    return free_turbo_ai(prompt, is_json=is_json)
+
+def clean_json_parse(raw_text, num_scenes):
+    try:
+        cleaned = re.sub(r"```json|```", "", raw_text).strip()
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1:
+            return json.loads(cleaned[start:end+1])
+    except Exception:
+        pass
+    return {
+        "visual_style_dna": "hyper-realistic dark cinematic 3D render, volumetric fog, dramatic rim lighting, Unreal Engine 5 style, 8k",
+        "script": raw_text,
+        "chapters": ["Part 1: Rahasya Ki Shuruwat", "Part 2: Gehra Sach", "Part 3: Anokha Mod", "Part 4: Antim Satya"],
+        "prompts": [f"cinematic scene {i+1} matching the story, dramatic lighting, ultra detailed" for i in range(num_scenes)]
+    }
+
+def build_cloned_script_and_visuals(comp_data, thumb_bytes, api_key, target_minutes, num_scenes, custom_style, status_box):
+    style_hint = f"User requested visual style: {custom_style}" if custom_style else "Analyze the attached competitor image/data and clone its EXACT visual art style (e.g. 3D render, dark realism, anime, historical painting, neon cyber, or documentary photography), color grading, lighting, and mood."
     
     if target_minutes <= 2:
         prompt = f"""
-Analyze this competitor video/channel/topic:
+Competitor Video Data:
 {comp_data}
 
-1. Identify the visual style.
-2. Write a high-retention viral Hindi voiceover script (around 160-220 words in Hinglish/Devanagari) with a crazy 3-second hook.
-3. Create {num_scenes} detailed English image generation prompts matching that exact visual style.
+{style_hint}
+
+1. Extract the exact "visual_style_dna" (25-word comma-separated style descriptor: art medium, color palette, lighting, camera lens, rendering engine).
+2. Write a high-retention viral Hindi voiceover script (180-220 words in Devanagari/Hinglish) on a similar viral angle.
+3. Write {num_scenes} scene-by-scene English image prompts where EVERY prompt describes the exact scene action + includes the exact same visual style DNA.
 
 Return ONLY valid JSON:
 {{
+  "visual_style_dna": "exact style tags...",
   "script": "Full Hindi voiceover script...",
-  "prompts": ["Detailed prompt 1", "Detailed prompt 2"]
+  "prompts": ["Scene 1 description...", "Scene 2 description..."]
 }}
 """
-        res = safe_gemini_call(client, prompt, is_json=True, status_box=status_box)
-        data = json.loads(res.text)
-        return data["script"], data["prompts"]
+        raw = smart_ai_call(api_key, prompt, thumb_bytes=thumb_bytes, is_json=True, status_box=status_box)
+        data = clean_json_parse(raw, num_scenes)
+        dna = data.get("visual_style_dna", custom_style or "cinematic 3D realistic dark moody lighting, 8k")
+        prompts = [f"{p}, {dna}" for p in data.get("prompts", [])]
+        while len(prompts) < num_scenes:
+            prompts.append(f"Dramatic key moment scene {len(prompts)+1}, {dna}")
+        return data.get("script", raw), prompts[:num_scenes], dna
 
-    num_chapters = max(3, target_minutes // 2)
-    status_box.info(f"🧠 {target_minutes} Minute Video ke liye {num_chapters} Chapters ka Master Plan ban raha hai...")
+    num_chapters = max(3, min(8, target_minutes // 2))
+    status_box.info(f"👁️ Competitor ka Visual Style scan ho raha hai aur {target_minutes} Min ka Plan ban raha hai...")
     
     plan_prompt = f"""
-Analyze this competitor data/topic:
+Competitor Video Data:
 {comp_data}
 
-Create a detailed {num_chapters}-chapter outline for a {target_minutes}-minute deep-dive documentary/story video in Hindi, and generate {num_scenes} detailed English image prompts matching the visual style.
+{style_hint}
+
+1. Extract the exact "visual_style_dna" (art medium, color grading, lighting, mood, camera style) so all generated visuals look 100% identical in style to this channel.
+2. Create a {num_chapters}-chapter outline for a {target_minutes}-minute Hindi video.
+3. Generate {num_scenes} detailed scene descriptions matching the story progression.
 
 Return ONLY valid JSON:
 {{
-  "visual_style": "Detailed style description",
-  "chapters": ["Chapter 1 title & detail", "Chapter 2 title & detail"],
-  "prompts": ["Detailed English image prompt 1", "Detailed English image prompt 2"]
+  "visual_style_dna": "exact style descriptor...",
+  "chapters": ["Chapter 1...", "Chapter 2..."],
+  "prompts": ["Scene 1...", "Scene 2..."]
 }}
 """
-    plan_res = safe_gemini_call(client, plan_prompt, is_json=True, status_box=status_box)
-    plan_data = json.loads(plan_res.text)
+    raw_plan = smart_ai_call(api_key, plan_prompt, thumb_bytes=thumb_bytes, is_json=True, status_box=status_box)
+    plan_data = clean_json_parse(raw_plan, num_scenes)
+    dna = plan_data.get("visual_style_dna", custom_style or "cinematic realistic documentary style, dramatic lighting, 8k")
     chapters = plan_data.get("chapters", [f"Part {i+1}" for i in range(num_chapters)])
-    prompts = plan_data.get("prompts", [])
-    
+    raw_prompts = plan_data.get("prompts", [])
+    prompts = [f"{p}, {dna}" for p in raw_prompts]
+    while len(prompts) < num_scenes:
+        prompts.append(f"Detailed story scene {len(prompts)+1}, {dna}")
+
     full_script_parts = []
     for idx, ch in enumerate(chapters):
-        status_box.info(f"✍️ AI Script likh raha hai: Chapter {idx+1}/{len(chapters)} ({target_minutes} Min Video)...")
-        time.sleep(2)
+        status_box.info(f"✍️ AI Script likh raha hai: Chapter {idx+1}/{len(chapters)}...")
         ch_prompt = f"""
-Topic/Competitor context: {comp_data[:800]}
-Current Chapter ({idx+1} of {len(chapters)}): {ch}
+Competitor Context: {comp_data[:800]}
+Chapter ({idx+1} of {len(chapters)}): {ch}
 
-Write an engaging, super-detailed, high-retention Hindi narration (in Hinglish/Devanagari script, minimum 300-350 words) for THIS chapter only. Do NOT include chapter headings or stage directions—write ONLY the exact spoken words so it flows seamlessly into the next chapter.
+Write an engaging, high-retention Hindi narration (in Devanagari/Hinglish, 350-400 words) for THIS chapter only. Write ONLY the spoken voiceover words without any titles or stage directions.
 """
-        ch_res = safe_gemini_call(client, ch_prompt, is_json=False, status_box=status_box)
-        full_script_parts.append(ch_res.text.strip())
+        ch_text = smart_ai_call(api_key, ch_prompt, thumb_bytes=None, is_json=False, status_box=status_box)
+        full_script_parts.append(ch_text.strip())
         
-    return "\n\n".join(full_script_parts), prompts
+    return "\n\n".join(full_script_parts), prompts[:num_scenes], dna
 
 def generate_ai_images(prompts, status_box, width, height):
     files = []
     total = len(prompts)
     for i, p in enumerate(prompts):
-        status_box.info(f"🎨 AI Visual {i+1}/{total} generate ho raha hai...")
-        q = urllib.parse.quote(f"{p}, cinematic lighting, 8k, ultra detailed")
-        url = f"https://image.pollinations.ai/prompt/{q}?width={width}&height={height}&seed={42+i}&nologo=true"
+        status_box.info(f"🎨 Competitor-Style AI Visual {i+1}/{total} ban raha hai...")
+        q = urllib.parse.quote(p)
+        url = f"https://image.pollinations.ai/prompt/{q}?width={width}&height={height}&seed={500+i}&model=flux&nologo=true"
         fname = f"frame_{i:04d}.jpg"
         ok = False
         for _ in range(3):
             try:
-                r = requests.get(url, timeout=25)
+                r = requests.get(url, timeout=30)
                 if r.status_code == 200:
                     with open(fname, "wb") as f:
                         f.write(r.content)
                     img = Image.open(fname).convert("RGB").resize((width, height), Image.LANCZOS)
-                    img.save(fname, quality=90)
+                    img.save(fname, quality=92)
                     files.append(fname)
                     ok = True
                     break
@@ -228,14 +292,14 @@ def render_ffmpeg(image_files, audio_file, sub_file, total_dur):
     subprocess.run(cmd, check=True)
     return "final_output.mp4"
 
-st.title("🔥 Auto-Video App (Shorts + 30 Min Long Videos)")
-st.caption("Fixed Voiceover | Auto Pause-Cut | AI Visuals | SFX & Viral Captions")
+st.title("🔥 Auto-Video App (Visual Style Cloner Edition)")
+st.caption("Competitor Visual Frame Scanner | FLUX AI Visuals | Auto Pause-Cut | Viral Captions")
 
-tab1, tab2 = st.tabs(["🤖 Mode 1: Link -> 100% Auto Video", "📁 Mode 2: Script + 50-60 Visuals"])
+tab1, tab2 = st.tabs(["🤖 Mode 1: Competitor Link -> Clone Style & Video", "📁 Mode 2: Apni Script + Auto/Manual Visuals"])
 
 with tab1:
-    api_key = st.text_input("1. Free Gemini API Key", type="password")
-    comp_url = st.text_input("2. Competitor YouTube Link (Ya Topic)")
+    comp_url = st.text_input("1. Competitor YouTube Video Link (Jiske Jaise Visuals Chahiye)")
+    custom_style = st.text_input("2. Visual Style Lock (Optional - Khali chhodenge toh App khud Video ka Thumbnail/Frame dekh kar style copy karega)", placeholder="e.g. Dark 3D green nature mystery, glowing lighting, Unreal Engine 5")
     
     duration_choice = st.selectbox(
         "3. Video Ki Lambai (Duration) Chunein:",
@@ -249,20 +313,25 @@ with tab1:
     )
     
     num_vis = st.slider("4. Kitne Unique AI Visuals Banayein?", 15, 60, 25, 5)
+    api_key = st.text_input("5. Gemini API Key (Optional - Khali chhodenge toh bhi 100% Free Turbo Engine se chalega!)", type="password")
     
-    if st.button("🚀 GENERATE FULL VIDEO AUTOMATICALLY", use_container_width=True):
-        if not api_key or not comp_url:
-            st.error("❌ Kripya API Key aur Competitor Link dono daalein!")
+    if st.button("🚀 CLONE STYLE & GENERATE FULL VIDEO", use_container_width=True):
+        if not comp_url:
+            st.error("❌ Kripya Competitor YouTube Link daalein!")
         else:
             status = st.empty()
             try:
                 target_mins = int(duration_choice.split()[0])
                 width, height = (720, 1280) if target_mins == 1 else (1280, 720)
                 
-                status.info("🕵️ Competitor Video/Channel scan ho raha hai...")
-                info = get_competitor_info(comp_url)
+                status.info("🕵️ Competitor Video ka Frame aur Visual Style scan ho raha hai...")
+                info, thumb_bytes = get_competitor_data_and_frame(comp_url)
+                if thumb_bytes:
+                    st.image(thumb_bytes, caption="✅ Competitor Frame Scanned for Visual Style Cloning", width=280)
                 
-                script, prompts = ai_long_and_short_brain(info, api_key, target_mins, num_vis, status)
+                script, prompts, detected_dna = build_cloned_script_and_visuals(info, thumb_bytes, api_key, target_mins, num_vis, custom_style, status)
+                st.info(f"🎨 **Cloned Visual Style DNA:** {detected_dna}")
+                
                 imgs = generate_ai_images(prompts, status, width, height)
                 
                 status.info("🎙️ Fixed Voiceover + Pause Cut + Boom SFX lag raha hai...")
@@ -276,14 +345,14 @@ with tab1:
                 status.success(f"✅ Aapki {int(dur//60)} Min {int(dur%60)} Sec ki Video Ready Hai!")
                 st.video(out)
                 with open(out, "rb") as f:
-                    st.download_button("📥 Download MP4 Video", f, file_name="auto_video.mp4", mime="video/mp4", use_container_width=True)
+                    st.download_button("📥 Download MP4 Video", f, file_name="cloned_style_video.mp4", mime="video/mp4", use_container_width=True)
             except Exception as e:
                 status.error(f"⚠️ Error: {str(e)}")
 
 with tab2:
-    user_script = st.text_area("1. Apni Script Paste Karein (Chahe 1 min ki ho ya 30 min ki)", height=150)
+    user_script = st.text_area("1. Apni Script Paste Karein (Yahan Gemini Pro chat se likhwa kar bhi daal sakte hain)", height=150)
     format_choice = st.radio("2. Video Size Chunein:", ["9:16 Vertical (Shorts)", "16:9 Landscape (Long Video)"], horizontal=True)
-    uploaded_files = st.file_uploader("3. Apne 50-60 Visuals (Photos) Select Karein", accept_multiple_files=True, type=['jpg', 'jpeg', 'png', 'webp'])
+    uploaded_files = st.file_uploader("3. Apne 50-60 Visuals Upload Karein", accept_multiple_files=True, type=['jpg', 'jpeg', 'png', 'webp'])
     
     if st.button("⚡ EDIT MY VISUALS NOW", use_container_width=True):
         if not user_script or not uploaded_files:
@@ -311,4 +380,4 @@ with tab2:
                     st.download_button("📥 Download Edited Video", f, file_name="edited_video.mp4", mime="video/mp4", use_container_width=True)
             except Exception as e:
                 status2.error(f"⚠️ Error: {str(e)}")
-    
+                        

@@ -21,6 +21,30 @@ def load_whisper():
 
 whisper_model = load_whisper()
 
+def safe_gemini_call(client, prompt, is_json=False, status_box=None):
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
+    for attempt in range(6):
+        model_name = models_to_try[min(attempt // 2, len(models_to_try) - 1)]
+        try:
+            cfg = {"response_mime_type": "application/json"} if is_json else None
+            return client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=cfg
+            )
+        except Exception as e:
+            err_str = str(e)
+            if "503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "overloaded" in err_str.lower():
+                wait_s = 6 * (attempt + 1)
+                if status_box:
+                    status_box.warning(f"⏳ Google AI Server busy hai, {wait_s} sec mein auto-retry ho raha hai (Attempt {attempt+1}/6)...")
+                time.sleep(wait_s)
+            elif "404" in err_str and model_name != "gemini-3.8-flash":
+                continue
+            else:
+                raise e
+    raise Exception("Google AI Server abhi bahut zyada busy hai. Kripya 1 minute baad dobara button dabayein.")
+
 def extract_video_id(url):
     pattern = r"(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
     match = re.search(pattern, url)
@@ -53,7 +77,6 @@ def get_competitor_info(url_or_topic):
 def ai_long_and_short_brain(comp_data, api_key, target_minutes, num_scenes, status_box):
     client = genai.Client(api_key=api_key.strip())
     
-    # 1 Minute Short Video Mode
     if target_minutes <= 2:
         prompt = f"""
 Analyze this competitor video/channel/topic:
@@ -69,15 +92,10 @@ Return ONLY valid JSON:
   "prompts": ["Detailed prompt 1", "Detailed prompt 2"]
 }}
 """
-        res = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config={"response_mime_type": "application/json"}
-        )
+        res = safe_gemini_call(client, prompt, is_json=True, status_box=status_box)
         data = json.loads(res.text)
         return data["script"], data["prompts"]
 
-    # 5, 10, 20, or 30 Minute Long Video Multi-Chapter Engine
     num_chapters = max(3, target_minutes // 2)
     status_box.info(f"🧠 {target_minutes} Minute Video ke liye {num_chapters} Chapters ka Master Plan ban raha hai...")
     
@@ -94,11 +112,7 @@ Return ONLY valid JSON:
   "prompts": ["Detailed English image prompt 1", "Detailed English image prompt 2"]
 }}
 """
-    plan_res = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=plan_prompt,
-        config={"response_mime_type": "application/json"}
-    )
+    plan_res = safe_gemini_call(client, plan_prompt, is_json=True, status_box=status_box)
     plan_data = json.loads(plan_res.text)
     chapters = plan_data.get("chapters", [f"Part {i+1}" for i in range(num_chapters)])
     prompts = plan_data.get("prompts", [])
@@ -106,16 +120,14 @@ Return ONLY valid JSON:
     full_script_parts = []
     for idx, ch in enumerate(chapters):
         status_box.info(f"✍️ AI Script likh raha hai: Chapter {idx+1}/{len(chapters)} ({target_minutes} Min Video)...")
+        time.sleep(2)
         ch_prompt = f"""
 Topic/Competitor context: {comp_data[:800]}
 Current Chapter ({idx+1} of {len(chapters)}): {ch}
 
 Write an engaging, super-detailed, high-retention Hindi narration (in Hinglish/Devanagari script, minimum 300-350 words) for THIS chapter only. Do NOT include chapter headings or stage directions—write ONLY the exact spoken words so it flows seamlessly into the next chapter.
 """
-        ch_res = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=ch_prompt
-        )
+        ch_res = safe_gemini_call(client, ch_prompt, is_json=False, status_box=status_box)
         full_script_parts.append(ch_res.text.strip())
         
     return "\n\n".join(full_script_parts), prompts
@@ -198,7 +210,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return "subs.ass"
 
 def render_ffmpeg(image_files, audio_file, sub_file, total_dur):
-    # Loop visuals smoothly for long 10-30 min videos
     num_loops = max(1, int(total_dur // (len(image_files) * 4)))
     expanded_images = (image_files * num_loops)[:max(len(image_files), int(total_dur // 3.5))]
     clip_dur = max(0.4, total_dur / len(expanded_images))
@@ -237,7 +248,7 @@ with tab1:
         ]
     )
     
-    num_vis = st.slider("4. Kitne Unique AI Visuals Banayein?", 15, 60, 30, 5)
+    num_vis = st.slider("4. Kitne Unique AI Visuals Banayein?", 15, 60, 25, 5)
     
     if st.button("🚀 GENERATE FULL VIDEO AUTOMATICALLY", use_container_width=True):
         if not api_key or not comp_url:
@@ -300,3 +311,4 @@ with tab2:
                     st.download_button("📥 Download Edited Video", f, file_name="edited_video.mp4", mime="video/mp4", use_container_width=True)
             except Exception as e:
                 status2.error(f"⚠️ Error: {str(e)}")
+    

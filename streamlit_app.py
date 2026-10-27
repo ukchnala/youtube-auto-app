@@ -408,7 +408,7 @@ with tab2:
                 status2.info("🎙️ Fixed Voiceover + Pause Cut + SFX ban raha hai...")
                 asyncio.run(make_tts(user_script))
                 aud, dur = build_audio_and_sfx(len(uploaded_files))
-                status2.info(f"🖼️ {len(uploaded_files)} Visuals set ho rahe ہیں...")
+                status2.info(f"🖼️ {len(uploaded_files)} Visuals set ho rahe hain...")
                 imgs = []
                 for i, uf in enumerate(uploaded_files):
                     img = Image.open(uf).convert("RGB").resize((w, h), Image.LANCZOS)
@@ -421,4 +421,12 @@ with tab2:
                 status2.success("✅ Aapki Video Ready Hai!")
                 st.video(out)
                 with open(out, "rb") as f:
-                    st.download_button("📥 Download Edited Video", f, file_name="ed
+                    st.download_button(
+                        "📥 Download EditeVideo",
+                        f,
+                        file_name="edited_video.mp4",
+                        mime="video/mp4",
+                        use_container_width=True
+                    )
+            except Exception as e:
+                status2.error(f"⚠️ Error: {str(e)}")

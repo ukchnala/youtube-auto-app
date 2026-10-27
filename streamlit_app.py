@@ -9,18 +9,11 @@ from google.genai import types
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
 from pydub.generators import Sine, WhiteNoise
-from faster_whisper import WhisperModel
 from PIL import Image, ImageStat
 
 st.set_page_config(page_title="Auto YouTube Studio", page_icon="🔥", layout="centered")
 
 FIXED_VOICE = "hi-IN-MadhurNeural"
-
-@st.cache_resource
-def load_whisper():
-    return WhisperModel("tiny", device="cpu", compute_type="int8")
-
-whisper_model = load_whisper()
 
 def extract_video_id(url):
     pattern = r"(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
@@ -286,8 +279,7 @@ def build_audio_and_sfx(num_cuts):
     clean.export("final_audio.mp3", format="mp3")
     return "final_audio.mp3", len(clean) / 1000.0
 
-def make_subtitles(audio_path, width, height):
-    segments, _ = whisper_model.transcribe(audio_path, word_timestamps=True)
+def make_subtitles_direct(script_text, total_dur, width, height):
     margin_v = 380 if height > width else 80
     font_sz = 80 if height > width else 64
     header = f"""[Script Info]
@@ -304,13 +296,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     def fmt(s):
         return f"{int(s//3600)}:{int((s%3600)//60):02d}:{int(s%60):02d}.{int((s-int(s))*100):02d}"
+    
+    raw_words = re.findall(r'\S+', script_text)
+    words = [w.strip().upper().replace(",", "").replace(".", "").replace("।", "") for w in raw_words if w.strip()]
+    if not words:
+        words = ["WATCH", "TILL", "THE", "END"]
+        
+    # Group into 2-word punchy viral captions synced across total duration
+    chunks = [" ".join(words[i:i+2]) for i in range(0, len(words), 2)]
+    step = max(0.25, total_dur / max(1, len(chunks)))
+    
     lines = [header]
-    for seg in segments:
-        for w in seg.words:
-            txt = w.word.strip().upper().replace(",", "").replace(".", "")
-            if not txt:
-                continue
-            lines.append(f"Dialogue: 0,{fmt(w.start)},{fmt(max(w.start+0.12, w.end))},Default,,0,0,0,,{{\\fscx130\\fscy130\\t(0,80,\\fscx100\\fscy100)}}{txt}\n")
+    curr_t = 0.0
+    for ch in chunks:
+        end_t = min(total_dur, curr_t + step)
+        lines.append(
+            f"Dialogue: 0,{fmt(curr_t)},{fmt(end_t)},Default,,0,0,0,,{{\\fscx130\\fscy130\\t(0,80,\\fscx100\\fscy100)}}{ch}\n"
+        )
+        curr_t = end_t
+        if curr_t >= total_dur:
+            break
+            
     with open("subs.ass", "w", encoding="utf-8") as f:
         f.writelines(lines)
     return "subs.ass"
@@ -383,13 +389,19 @@ with tab1:
                 aud, dur = build_audio_and_sfx(len(imgs))
                 
                 status.info("⚡ Viral Captions aur Final Video Render ho rahi hai...")
-                sub = make_subtitles(aud, width, height)
+                sub = make_subtitles_direct(script, dur, width, height)
                 out = render_ffmpeg(imgs, aud, sub, dur)
                 
                 status.success(f"✅ Aapki {int(dur//60)} Min {int(dur%60)} Sec ki Video Ready Hai!")
                 st.video(out)
                 with open(out, "rb") as f:
-                    st.download_button("📥 Download MP4 Video", f, file_name="cloned_style_video.mp4", mime="video/mp4", use_container_width=True)
+                    st.download_button(
+                        "📥 Download MP4 Video",
+                        f,
+                        file_name="cloned_style_video.mp4",
+                        mime="video/mp4",
+                        use_container_width=True
+                    )
             except Exception as e:
                 status.error(f"⚠️ Error: {str(e)}")
 
@@ -415,14 +427,14 @@ with tab2:
                     p = f"manual_{i:04d}.jpg"
                     img.save(p, quality=90)
                     imgs.append(p)
-                status2.info("⚡ Viral Captions + Final Video Render ho rahi hai...")
-                sub = make_subtitles(aud, w, h)
+                status2.info("⚡ Viral Captions+ Final Video Render ho rahi hai...")
+                sub = make_subtitles_direct(user_script, dur, w, h)
                 out = render_ffmpeg(imgs, aud, sub, dur)
                 status2.success("✅ Aapki Video Ready Hai!")
                 st.video(out)
                 with open(out, "rb") as f:
                     st.download_button(
-                        "📥 Download EditeVideo",
+                        "📥 Download Edited Video",
                         f,
                         file_name="edited_video.mp4",
                         mime="video/mp4",

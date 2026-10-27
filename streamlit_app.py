@@ -28,7 +28,6 @@ def extract_video_id(url):
     return match.group(1) if match else None
 
 def analyze_frame_style_locally(thumb_bytes):
-    # Analyze actual image brightness & contrast from competitor frame
     try:
         from io import BytesIO
         img = Image.open(BytesIO(thumb_bytes)).convert("RGB")
@@ -90,7 +89,6 @@ def get_competitor_data_and_frame(url_or_topic):
     return {"title": title_text, "text": info_text if info_text else f"Topic: {title_text}"}, thumb_bytes
 
 def call_any_ai(api_key, prompt, thumb_bytes=None, is_json=False):
-    # 1. First try Gemini 3.8 models with user API Key
     if api_key and len(api_key.strip()) > 10:
         client = genai.Client(api_key=api_key.strip())
         for m in ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash", "gemini-1.5-flash"]:
@@ -109,7 +107,6 @@ def call_any_ai(api_key, prompt, thumb_bytes=None, is_json=False):
                         continue
                     break
 
-    # 2. Try Fast GET Pollinations Endpoint (Short URL)
     try:
         short_p = urllib.parse.quote(prompt[:900])
         r = requests.get(f"https://text.pollinations.ai/{short_p}?model=openai", timeout=25)
@@ -118,7 +115,6 @@ def call_any_ai(api_key, prompt, thumb_bytes=None, is_json=False):
     except Exception:
         pass
 
-    # 3. Try POST Pollinations Endpoint
     for model_name in ["openai", "mistral"]:
         try:
             r = requests.post(
@@ -144,7 +140,6 @@ def build_guaranteed_script_and_visuals(comp_info, thumb_bytes, api_key, target_
 
     status_box.info("🧠 Competitor ka Visual DNA aur Script taiyar ho rahi hai...")
 
-    # Ask AI for visual subjects + script
     prompt = f"""
 Based on this video topic/data:
 {comp_text[:1200]}
@@ -176,7 +171,6 @@ Return ONLY valid JSON:
     base_script = (parsed.get("script") if parsed else None) or ""
     raw_scenes = (parsed.get("scenes") if parsed else None) or []
 
-    # If AI script is needed for longer duration or fallback, expand chapters safely
     target_parts = 1 if target_minutes <= 2 else max(2, min(6, target_minutes // 2))
     script_parts = [base_script] if len(base_script) > 80 else []
 
@@ -197,7 +191,6 @@ Return ONLY valid JSON:
         if ch_res and len(ch_res.strip()) > 60:
             script_parts.append(re.sub(r"[#*`]", "", ch_res).strip())
         else:
-            # 100% Unstoppable Smart Fallback Narration so it NEVER fails!
             script_parts.append(
                 f"क्या आपने कभी सोचा है कि {title_subject} के पीछे का असली सच क्या है? "
                 f"जब आप इसे करीब से देखते हैं, तो पता चलता है कि प्रकृति ने इसके अंदर ऐसे रहस्य छिपा रखे हैं जिन्हें देखकर बड़े-बड़े वैज्ञानिक भी हैरान रह जाते हैं। "
@@ -209,7 +202,6 @@ Return ONLY valid JSON:
 
     full_script = "\n\n".join(script_parts)
 
-    # Build exact number of visual prompts matching the competitor frame style
     camera_angles = [
         "extreme macro close-up shot",
         "dramatic side profile in pitch black darkness",
@@ -255,12 +247,10 @@ def generate_ai_images(prompts, status_box, width, height, fallback_thumb=None):
             except Exception:
                 time.sleep(1)
         if not ok:
-            # Fallback: create stylized dark variation from competitor frame if network hiccups
             if fallback_thumb:
                 try:
                     from io import BytesIO
                     base = Image.open(BytesIO(fallback_thumb)).convert("RGB").resize((width, height), Image.LANCZOS)
-                    # Slight crop/zoom variation
                     w_crop = int(width * 0.9)
                     h_crop = int(height * 0.9)
                     left = (i * 7) % (width - w_crop)
@@ -418,6 +408,17 @@ with tab2:
                 status2.info("🎙️ Fixed Voiceover + Pause Cut + SFX ban raha hai...")
                 asyncio.run(make_tts(user_script))
                 aud, dur = build_audio_and_sfx(len(uploaded_files))
-                status2.info(f"🖼️ {len(uploaded_files)} Visuals set ho rahe hain...")
+                status2.info(f"🖼️ {len(uploaded_files)} Visuals set ho rahe ہیں...")
                 imgs = []
-                for i, u
+                for i, uf in enumerate(uploaded_files):
+                    img = Image.open(uf).convert("RGB").resize((w, h), Image.LANCZOS)
+                    p = f"manual_{i:04d}.jpg"
+                    img.save(p, quality=90)
+                    imgs.append(p)
+                status2.info("⚡ Viral Captions + Final Video Render ho rahi hai...")
+                sub = make_subtitles(aud, w, h)
+                out = render_ffmpeg(imgs, aud, sub, dur)
+                status2.success("✅ Aapki Video Ready Hai!")
+                st.video(out)
+                with open(out, "rb") as f:
+                    st.download_button("📥 Download Edited Video", f, file_name="ed
